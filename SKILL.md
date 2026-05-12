@@ -1,7 +1,7 @@
 ---
 name: agent-browser-opera-gx
 description: Control Opera GX browser via agent-browser CLI using CDP (Chrome DevTools Protocol). Enables AI-driven browser automation on the user's real browser with their sessions, cookies, and logins intact.
-version: 1.2.0
+version: 1.2.1
 author: Hermes Agent
 license: MIT
 metadata:
@@ -19,7 +19,7 @@ Control the user's **real Opera GX browser** via the `agent-browser` CLI using C
 1. **NEVER use MCP Playwright** — it crashes, drops connections, and is unreliable. Use agent-browser or Direct CDP only.
 2. **NEVER let agent-browser launch its own browser** — always connect to the user's Opera GX via CDP. If agent-browser launches its own headless Chrome, you lose all login sessions.
 3. **Always use `--cdp 9222` flag** — this connects to Opera GX's CDP port instead of launching a new browser.
-4. **For screenshots, use Direct CDP Python approach** — agent-browser `--cdp 9222 screenshot` can give blank/black screenshots or connect to the wrong tab. The Python websockets approach is 100% reliable.
+4. **For screenshots, ALWAYS use Direct CDP Python approach** — `agent-browser --cdp 9222 screenshot` is **BROKEN**: it connects to the wrong context, takes screenshots of its own headless browser, or returns blank/black images. The ONLY reliable method is Python websockets connecting directly to the tab's CDP endpoint.
 
 ## Prerequisites
 
@@ -54,9 +54,9 @@ agent-browser --cdp 9222 open linkedin.com
 agent-browser --cdp 9222 open <url>           # Navigate to URL
 agent-browser --cdp 9222 open https://linkedin.com  # Opens logged-in LinkedIn feed
 agent-browser --cdp 9222 snapshot              # Get accessibility tree with refs
-agent-browser --cdp 9222 screenshot page.png   # Take screenshot (may be unreliable)
 agent-browser --cdp 9222 get url               # Get current URL
 agent-browser --cdp 9222 get title             # Get page title
+# For screenshots: use Direct CDP Python approach (see below)
 ```
 
 ### Interacting with Elements (always with --cdp 9222)
@@ -98,7 +98,7 @@ agent-browser --cdp 9222 get attr @e2 href     # Get attribute
 5. **Background process** — when launching Opera GX with CDP, use `terminal(background=true)` since it's a long-lived process.
 6. **CDP verification** — always run `curl -s http://localhost:9222/json/version` after launch to confirm CDP is listening before connecting.
 7. **Sessions lost on CDP restart** — launching Opera GX with `--remote-debugging-port` can drop login cookies for sites like LinkedIn and Google. User must re-login after CDP restart, then agent-browser can use the refreshed session.
-8. **`agent-browser --cdp 9222 screenshot` usually works** — it's the primary screenshot method. If it gives blank/black screenshots, fall back to the Direct CDP WebSocket Python approach (see below).
+8. **`agent-browser --cdp 9222 screenshot` is BROKEN** — it connects to agent-browser's own headless Chrome context, NOT the Opera GX tab. It will take screenshots of the wrong page, return blank/black images, or show a different site entirely. **ALWAYS use the Direct CDP Python approach** for screenshots (see below).
 9. **Clipboard paste doesn't work** — `Meta+v` via agent-browser does NOT paste from system clipboard into web apps. Use `agent-browser --cdp 9222 keyboard inserttext "text"` instead for inserting text (works in Google Docs, textareas, etc.).
 10. **osascript keystroke injection** — requires macOS Accessibility permissions (System Settings → Privacy → Accessibility). Without permission, it fails with error 1002. Prefer agent-browser's built-in commands.
 11. **NEVER use `agent-browser connect`** — it times out. Always use `--cdp 9222` flag.
@@ -119,9 +119,9 @@ curl -s http://127.0.0.1:9222/json/version
 curl -s -X PUT "http://127.0.0.1:9222/json/new?https://www.linkedin.com"
 ```
 
-### Screenshot of a Specific Tab (Direct CDP WebSocket — FALLBACK ONLY)
+### Screenshot of a Specific Tab (Direct CDP WebSocket — PRIMARY METHOD)
 
-Use this **only if** `agent-browser --cdp 9222 screenshot` gives blank/black screenshots. The agent-browser command is the primary method — it works reliably for most sites.
+**This is the ONLY reliable method for taking screenshots.** `agent-browser --cdp 9222 screenshot` connects to the wrong context and takes screenshots of agent-browser's own headless Chrome, not the Opera GX tab.
 
 ```python
 import json, base64, asyncio, websockets
