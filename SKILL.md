@@ -314,7 +314,12 @@ async def create_github_token():
             });
         """})
 
-        # 4. Click Generate token
+        # 4. Set expiration (optional) — GitHub uses action-list buttons, not <select>
+        # Options: data-value="7"|"30"|"60"|"90"|"none"|"custom"
+        # For no expiration: click button[data-value="none"]
+        # Selector: .js-new-default-token-expiration-item button[data-value="none"]
+
+        # 5. Click Generate token
         await send_cmd("Runtime.evaluate", {"expression": """
             [...document.querySelectorAll('button')].find(b =>
                 b.textContent.trim().includes('Generate token')
@@ -322,14 +327,14 @@ async def create_github_token():
         """})
         await asyncio.sleep(5)
 
-        # 5. Take screenshot — read token via vision_analyze (unreliable!)
+        # 6. Take screenshot — read token via vision_analyze (unreliable!)
         await ws.send(json.dumps({"id": 99, "method": "Page.captureScreenshot", "params": {"format": "png"}}))
         resp = json.loads(await ws.recv())
         with open("/tmp/github_token.png", "wb") as f:
             f.write(base64.b64decode(resp["result"]["data"]))
 
-        # 6. Token is in DOM but MASKED — use vision_analyze on screenshot instead
-        # 7. ALWAYS verify token via API: curl -H "Authorization: token TOKEN" https://api.github.com/user
+        # 7. Token is in DOM but MASKED — use vision_analyze on screenshot instead
+        # 8. ALWAYS verify token via API: curl -H "Authorization: token TOKEN" https://api.github.com/user
 
 asyncio.run(create_github_token())
 ```
