@@ -102,6 +102,9 @@ agent-browser open https://example.com  # Opens in current tab
 4. **agent-browser refs are ephemeral** — re-run `snapshot` after page changes or clicks.
 5. **Background process** — when launching Opera GX with CDP, use `terminal(background=true)` since it's a long-lived process.
 6. **CDP verification** — always run `curl -s http://localhost:9222/json/version` after launch to confirm CDP is listening before connecting.
+7. **Google sign-in blocked on CDP browsers** — Google detects `--remote-debugging-port` and shows "This browser or app may not be secure." User must log into Google/LinkedIn/etc. manually in Opera GX first, then reconnect agent-browser.
+8. **Clipboard paste doesn't work** — `Meta+v` via agent-browser does NOT paste from system clipboard into web apps. Use `agent-browser keyboard inserttext "text"` instead for inserting text (works in Google Docs, textareas, etc.).
+9. **osascript keystroke injection** — requires macOS Accessibility permissions (System Settings → Privacy → Accessibility). Without permission, it fails with error 1002. Prefer agent-browser's built-in commands.
 
 ## Connecting to Other Chromium Browsers
 
@@ -116,9 +119,17 @@ Same CDP approach works for Chrome, Brave, Edge:
 
 ## Verified Workflows
 
-- ✅ Google Drive — upload files via `agent-browser upload`
-- ✅ LinkedIn — navigate feed, read posts, take screenshots
-- ✅ Any site with Google/SSO login — uses real browser sessions
+- ✅ Google Drive — upload files via `agent-browser upload "input[type=file]"`
+- ✅ Google Docs — create doc, insert text via `agent-browser keyboard inserttext`
+- ✅ LinkedIn — navigate feed, read posts, take screenshots (must be logged in before CDP)
+- ✅ Any site with Google/SSO login — uses real browser sessions (but Google blocks sign-in on CDP browsers)
+
+## Important: Login Before Enabling CDP
+
+Google, LinkedIn, and other services may block sign-in when they detect CDP (`--remote-debugging-port`). **Best practice:**
+1. Have user log into all needed services in Opera GX normally (without CDP)
+2. Then restart Opera GX with CDP enabled
+3. Sessions/cookies persist, so already-logged-in sites work fine
 - ✅ Google Docs — create docs and insert text (see below)
 
 ### Google Docs Creation Workflow
