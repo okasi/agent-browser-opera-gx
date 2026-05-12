@@ -25,6 +25,7 @@ Control the user's **real Opera GX browser** via the `agent-browser` CLI using C
 
 ```bash
 npm install -g agent-browser
+pip3 install websockets  # Required for Direct CDP screenshots
 ```
 
 ## Setup: Connect to Opera GX
@@ -41,18 +42,30 @@ pkill -f "Opera GX.app"
 # 3. Verify CDP is running
 curl -s http://localhost:9222/json/version
 
-# 4. Connect agent-browser (MUST use --cdp flag)
-agent-browser --cdp 9222 open linkedin.com
+# 4. Open tabs via Direct CDP (agent-browser open is unreliable — opens in wrong context)
+curl -s -X PUT "http://127.0.0.1:9222/json/new?https://www.linkedin.com"
 ```
 
 **NEVER use `agent-browser connect`** — it often times out. Always use `--cdp 9222` flag with commands.
 
 ## Usage
 
-### Navigation (always with --cdp 9222)
+### Opening Tabs (Primary: Direct CDP)
+
+**`agent-browser --cdp 9222 open` is UNRELIABLE** — it reports success but opens URLs in its own headless Chrome context, NOT in Opera GX. Always use curl PUT to open new tabs:
+
 ```bash
-agent-browser --cdp 9222 open <url>           # Navigate to URL
-agent-browser --cdp 9222 open https://linkedin.com  # Opens logged-in LinkedIn feed
+# ✅ RELIABLE: Open new tab in Opera GX via CDP (MUST use PUT, not GET)
+curl -s -X PUT "http://127.0.0.1:9222/json/new?https://www.linkedin.com"
+# Returns JSON with tab id and webSocketDebuggerUrl
+
+# ❌ UNRELIABLE: Reports success but opens in wrong context
+agent-browser --cdp 9222 open https://linkedin.com
+```
+
+### Navigation (agent-browser for interaction within a tab)
+
+```bash
 agent-browser --cdp 9222 snapshot              # Get accessibility tree with refs
 agent-browser --cdp 9222 get url               # Get current URL
 agent-browser --cdp 9222 get title             # Get page title
@@ -92,17 +105,19 @@ agent-browser --cdp 9222 get attr @e2 href     # Get attribute
 ## Pitfalls
 
 1. **Opera GX must be restarted with `--remote-debugging-port=9222`** — CDP is not enabled by default. Always warn the user before killing their browser.
-2. **File upload dialogs are native** — use `agent-browser --cdp 9222 upload "input[type=file]"/path/to/file"` to handle them programmatically. osascript keystroke injection requires Accessibility permissions and often fails.
-3. **Port 9222 must be free** — check with `lsof -i :9222` if connection fails.
-4. **agent-browser refs are ephemeral** — re-run `snapshot` after page changes or clicks.
-5. **Background process** — when launching Opera GX with CDP, use `terminal(background=true)` since it's a long-lived process.
-6. **CDP verification** — always run `curl -s http://localhost:9222/json/version` after launch to confirm CDP is listening before connecting.
-7. **Sessions lost on CDP restart** — launching Opera GX with `--remote-debugging-port` can drop login cookies for sites like LinkedIn and Google. User must re-login after CDP restart, then agent-browser can use the refreshed session.
-8. **`agent-browser --cdp 9222 screenshot` is BROKEN** — it connects to agent-browser's own headless Chrome context, NOT the Opera GX tab. It will take screenshots of the wrong page, return blank/black images, or show a different site entirely. **ALWAYS use the Direct CDP Python approach** for screenshots (see below).
-9. **Clipboard paste doesn't work** — `Meta+v` via agent-browser does NOT paste from system clipboard into web apps. Use `agent-browser --cdp 9222 keyboard inserttext "text"` instead for inserting text (works in Google Docs, textareas, etc.).
-10. **osascript keystroke injection** — requires macOS Accessibility permissions (System Settings → Privacy → Accessibility). Without permission, it fails with error 1002. Prefer agent-browser's built-in commands.
-11. **NEVER use `agent-browser connect`** — it times out. Always use `--cdp 9222` flag.
-12. **NEVER use `agent-browser navigate`** — it launches its own headless Chrome. Use `agent-browser --cdp 9222 open` instead.
+2. **`agent-browser --cdp 9222 open` is BROKEN for opening new tabs** — it reports success but opens URLs in agent-browser's own headless Chrome, NOT in Opera GX. Always use `curl -s -X PUT "http://127.0.0.1:9222/json/new?URL"` to open tabs.
+3. **File upload dialogs are native** — use `agent-browser --cdp 9222 upload "input[type=file]"/path/to/file"` to handle them programmatically. osascript keystroke injection requires Accessibility permissions and often fails.
+4. **Port 9222 must be free** — check with `lsof -i :9222` if connection fails.
+5. **agent-browser refs are ephemeral** — re-run `snapshot` after page changes or clicks.
+6. **Background process** — when launching Opera GX with CDP, use `terminal(background=true)` since it's a long-lived process.
+7. **CDP verification** — always run `curl -s http://localhost:9222/json/version` after launch to confirm CDP is listening before connecting.
+8. **Sessions lost on CDP restart** — launching Opera GX with `--remote-debugging-port` can drop login cookies for sites like LinkedIn and Google. User must re-login after CDP restart, then agent-browser can use the refreshed session.
+9. **`agent-browser --cdp 9222 screenshot` is BROKEN** — it connects to agent-browser's own headless Chrome context, NOT the Opera GX tab. It will take screenshots of the wrong page, return blank/black images, or show a different site entirely. **ALWAYS use the Direct CDP Python approach** for screenshots (see below).
+10. **Clipboard paste doesn't work** — `Meta+v` via agent-browser does NOT paste from system clipboard into web apps. Use `agent-browser --cdp 9222 keyboard inserttext "text"` instead for inserting text (works in Google Docs, textareas, etc.).
+11. **osascript keystroke injection** — requires macOS Accessibility permissions (System Settings → Privacy → Accessibility). Without permission, it fails with error 1002. Prefer agent-browser's built-in commands.
+12. **NEVER use `agent-browser connect`** — it times out. Always use `--cdp 9222` flag.
+13. **NEVER use `agent-browser navigate`** — it launches its own headless Chrome. Use `agent-browser --cdp 9222 open` instead (but see pitfall #2 — even `open` is broken for new tabs; use curl PUT).
+14. **`websockets` Python package required** — `pip3 install websockets` if not already installed. Needed for Direct CDP screenshots.
 
 ## Direct CDP Commands (Fallback)
 
@@ -210,3 +225,39 @@ agent-browser --cdp 9222 press Enter
 - `pbcopy` + `Cmd+V` — ❌ browser can't access system clipboard
 - `navigator.clipboard.readText()` — ❌ times out (no user gesture)
 - `agent-browser --cdp 9222 keyboard inserttext` — ✅ works perfectly
+
+## Full Workflow: Navigate + Screenshot + Describe
+
+When the user says "go to X and show me", use this exact sequence:
+
+```bash
+# 1. Check CDP is running
+curl -s http://localhost:9222/json/version
+
+# 2. Open new tab via Direct CDP (NOT agent-browser open — that's broken)
+TAB_JSON=$(curl -s -X PUT "http://127.0.0.1:9222/json/new?https://www.example.com")
+WS_URL=$(echo "$TAB_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['webSocketDebuggerUrl'])")
+
+# 3. Wait for page to load
+sleep 4
+
+# 4. Take screenshot via Direct CDP Python
+python3 << 'PYEOF'
+import json, base64, asyncio, websockets
+
+async def screenshot(ws_url, output):
+    async with websockets.connect(ws_url, max_size=10*1024*1024) as ws:
+        await ws.send(json.dumps({"id": 1, "method": "Page.captureScreenshot", "params": {"format": "png"}}))
+        resp = json.loads(await ws.recv())
+        with open(output, "wb") as f:
+            f.write(base64.b64decode(resp["result"]["data"]))
+        print(f"Saved to {output}")
+
+asyncio.run(screenshot("WS_URL_HERE", "/tmp/screenshot.png"))
+PYEOF
+
+# 5. Share with user via MEDIA: tag in response
+# MEDIA:/tmp/screenshot.png
+```
+
+**Why this workflow:** `agent-browser --cdp 9222 open` opens URLs in its own headless Chrome (wrong context). `curl -X PUT /json/new` opens a real tab in Opera GX. The Python websockets screenshot captures exactly what's in that Opera GX tab.
