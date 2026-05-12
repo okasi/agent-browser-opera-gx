@@ -119,3 +119,34 @@ Same CDP approach works for Chrome, Brave, Edge:
 - ✅ Google Drive — upload files via `agent-browser upload`
 - ✅ LinkedIn — navigate feed, read posts, take screenshots
 - ✅ Any site with Google/SSO login — uses real browser sessions
+- ✅ Google Docs — create docs and insert text (see below)
+
+### Google Docs Creation Workflow
+
+```bash
+# 1. Create a new doc
+agent-browser open https://docs.google.com/document/create
+
+# 2. Find the document content area
+agent-browser snapshot | grep "Document content"
+
+# 3. Click the editor
+agent-browser click @e86
+
+# 4. Insert text — MUST use keyboard inserttext (NOT clipboard)
+agent-browser keyboard inserttext "Your text here"
+
+# For large content, split into chunks:
+TEXT=$(head -50 /tmp/content.txt)
+agent-browser keyboard inserttext "$TEXT"
+
+# 5. Rename the doc
+agent-browser snapshot | grep "Rename"
+agent-browser fill @e76 "My Document Title"
+agent-browser press Enter
+```
+
+**CRITICAL: Clipboard does NOT work with agent-browser.**
+- `pbcopy` + `Cmd+V` — ❌ browser can't access system clipboard
+- `navigator.clipboard.readText()` — ❌ times out (no user gesture)
+- `agent-browser keyboard inserttext` — ✅ works perfectly
