@@ -98,7 +98,7 @@ agent-browser --cdp 9222 get attr @e2 href     # Get attribute
 5. **Background process** — when launching Opera GX with CDP, use `terminal(background=true)` since it's a long-lived process.
 6. **CDP verification** — always run `curl -s http://localhost:9222/json/version` after launch to confirm CDP is listening before connecting.
 7. **Sessions lost on CDP restart** — launching Opera GX with `--remote-debugging-port` can drop login cookies for sites like LinkedIn and Google. User must re-login after CDP restart, then agent-browser can use the refreshed session.
-8. **`agent-browser --cdp 9222 screenshot` can give blank/black screenshots** — agent-browser may connect to the wrong tab or a stale context. For reliable screenshots of specific tabs, use the Direct CDP WebSocket Python approach (see below).
+8. **`agent-browser --cdp 9222 screenshot` usually works** — it's the primary screenshot method. If it gives blank/black screenshots, fall back to the Direct CDP WebSocket Python approach (see below).
 9. **Clipboard paste doesn't work** — `Meta+v` via agent-browser does NOT paste from system clipboard into web apps. Use `agent-browser --cdp 9222 keyboard inserttext "text"` instead for inserting text (works in Google Docs, textareas, etc.).
 10. **osascript keystroke injection** — requires macOS Accessibility permissions (System Settings → Privacy → Accessibility). Without permission, it fails with error 1002. Prefer agent-browser's built-in commands.
 11. **NEVER use `agent-browser connect`** — it times out. Always use `--cdp 9222` flag.
@@ -119,9 +119,9 @@ curl -s http://127.0.0.1:9222/json/version
 curl -s -X PUT "http://127.0.0.1:9222/json/new?https://www.linkedin.com"
 ```
 
-### Screenshot of a Specific Tab (Direct CDP WebSocket — RECOMMENDED)
+### Screenshot of a Specific Tab (Direct CDP WebSocket — FALLBACK ONLY)
 
-This is the **most reliable method** for taking screenshots. Use Python websockets to connect directly to the exact tab:
+Use this **only if** `agent-browser --cdp 9222 screenshot` gives blank/black screenshots. The agent-browser command is the primary method — it works reliably for most sites.
 
 ```python
 import json, base64, asyncio, websockets
