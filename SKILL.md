@@ -1,7 +1,7 @@
 ---
 name: agent-browser-opera-gx
 description: Control Opera GX browser via agent-browser CLI using CDP (Chrome DevTools Protocol). Enables AI-driven browser automation on the user's real browser with their sessions, cookies, and logins intact.
-version: 1.2.1
+version: 1.3.0
 author: Hermes Agent
 license: MIT
 metadata:
@@ -118,6 +118,10 @@ agent-browser --cdp 9222 get attr @e2 href     # Get attribute
 12. **NEVER use `agent-browser connect`** — it times out. Always use `--cdp 9222` flag.
 13. **NEVER use `agent-browser navigate`** — it launches its own headless Chrome. Use `agent-browser --cdp 9222 open` instead (but see pitfall #2 — even `open` is broken for new tabs; use curl PUT).
 14. **`websockets` Python package required** — `pip3 install websockets` if not already installed. Needed for Direct CDP screenshots.
+15. **Checkbox toggling via JS** — when checking checkboxes via `Runtime.evaluate`, do NOT set `checked = true` then call `.click()`. The click toggles it back to false. Use either: just `.click()` without setting checked, OR check `if (!cb.checked)` before clicking.
+16. **GitHub masks secrets in DOM** — elements like `#new-oauth-token` show truncated text (e.g., `ghp_I4...LMUg`). The `vision_analyze` tool can read full tokens from screenshots, but is UNRELIABLE (failed 2/3 times in testing). ALWAYS verify any token/secret via API call before using it.
+17. **GitHub web editor uses CodeMirror 6 (CM6)** — the CM6 editor does not expose its view instance via DOM properties. You cannot programmatically replace content in GitHub's web editor via CDP. Use `git push` with a token instead.
+18. **agent-browser snapshot targets wrong tab** — `agent-browser --cdp 9222 snapshot` may connect to a different tab than intended (e.g., LinkedIn instead of GitHub). Always verify the snapshot content matches the expected page. Use `curl -s http://127.0.0.1:9222/json/list` to list tabs and Direct CDP for tab-specific operations.
 
 ## Direct CDP Commands (Fallback)
 
@@ -171,6 +175,48 @@ asyncio.run(screenshot_tab(
 
 **Why this works:** Connects directly to the exact tab's CDP endpoint, bypasses agent-browser's session management which can route to the wrong tab or a headless Chrome instance.
 
+### Full-Page Screenshot (Beyond Viewport)
+
+To capture the entire scrollable page, not just the visible viewport:
+
+```python
+import json, base64, asyncio, websockets
+
+async def full_screenshot(ws_url, output):
+    async with websockets.connect(ws_url, max_size=50*1024*1024) as ws:
+        # Get full page dimensions
+        await ws.send(json.dumps({
+            "id": 1, "method": "Runtime.evaluate",
+            "params": {"expression": "JSON.stringify({width: document.documentElement.scrollWidth, height: document.documentElement.scrollHeight})"}
+        }))
+        resp = json.loads(await ws.recv())
+        dims = json.loads(resp["result"]["result"]["value"])
+
+        # Set device metrics to full page size
+        await ws.send(json.dumps({
+            "id": 2, "method": "Emulation.setDeviceMetricsOverride",
+            "params": {"width": dims["width"], "height": dims["height"], "deviceScaleFactor": 1, "mobile": False}
+        }))
+        await ws.recv()
+        await asyncio.sleep(1)
+
+        # Capture with clip covering full page
+        await ws.send(json.dumps({
+            "id": 3, "method": "Page.captureScreenshot",
+            "params": {"format": "png", "captureBeyondViewport": True,
+                       "clip": {"x": 0, "y": 0, "width": dims["width"], "height": dims["height"], "scale": 1}}
+        }))
+        resp = json.loads(await ws.recv())
+        with open(output, "wb") as f:
+            f.write(base64.b64decode(resp["result"]["data"]))
+
+        # Reset device metrics
+        await ws.send(json.dumps({"id": 4, "method": "Emulation.clearDeviceMetricsOverride", "params": {}}))
+        await ws.recv()
+
+asyncio.run(full_screenshot("ws://127.0.0.1:9222/devtools/page/TAB_ID", "/tmp/full.png"))
+```
+
 ## Connecting to Other Chromium Browsers
 
 Same CDP approach works for Chrome, Brave, Edge:
@@ -188,6 +234,8 @@ Same CDP approach works for Chrome, Brave, Edge:
 - ✅ Google Docs — create doc, insert text via `agent-browser --cdp 9222 keyboard inserttext`
 - ✅ LinkedIn — navigate feed, read posts, take screenshots (must be logged in before CDP)
 - ✅ Any site with Google/SSO login — uses real browser sessions (but Google blocks sign-in on CDP browsers)
+- ✅ GitHub token creation — fill form via JS, check scopes with `.click()`, generate, read token via `vision_analyze` on screenshot, verify via API before using
+- ✅ GitHub web editor — GitHub uses CodeMirror 6 (CM6), cannot programmatically replace content. Use `git push` with token instead.
 
 ## Important: Login Before Enabling CDP
 
@@ -225,6 +273,72 @@ agent-browser --cdp 9222 press Enter
 - `pbcopy` + `Cmd+V` — ❌ browser can't access system clipboard
 - `navigator.clipboard.readText()` — ❌ times out (no user gesture)
 - `agent-browser --cdp 9222 keyboard inserttext` — ✅ works perfectly
+
+### GitHub Token Creation via CDP
+
+When you need a GitHub PAT and the user is logged in to GitHub in Opera GX:
+
+```python
+import json, asyncio, websockets, base64
+
+WS_URL = "ws://127.0.0.1:9222/devtools/page/TAB_ID"
+
+async def create_github_token():
+    async with websockets.connect(WS_URL, max_size=10*1024*1024) as ws:
+        msg_id = 0
+        async def send_cmd(method, params=None):
+            nonlocal msg_id
+            msg_id += 1
+            cmd = {"id": msg_id, "method": method}
+            if params: cmd["params"] = params
+            await ws.send(json.dumps(cmd))
+            return json.loads(await ws.recv())
+
+        # 1. Navigate to token creation page
+        await send_cmd("Page.navigate", {"url": "https://github.com/settings/tokens/new"})
+        await asyncio.sleep(3)
+
+        # 2. Fill note field
+        await send_cmd("Runtime.evaluate", {"expression": """
+            const note = document.querySelector('#oauth_access_description');
+            note.value = 'my-token-name';
+            note.dispatchEvent(new Event('input', {bubbles: true}));
+        """})
+
+        # 3. Check scopes — use .click() only, do NOT set checked then click
+        await send_cmd("Runtime.evaluate", {"expression": """
+            document.querySelectorAll('input[name="oauth_access[scopes][]"]').forEach(cb => {
+                if ((cb.value === 'repo' || cb.value === 'workflow') && !cb.checked) {
+                    cb.click();  // just click, don't set checked first
+                }
+            });
+        """})
+
+        # 4. Click Generate token
+        await send_cmd("Runtime.evaluate", {"expression": """
+            [...document.querySelectorAll('button')].find(b =>
+                b.textContent.trim().includes('Generate token')
+            )?.click();
+        """})
+        await asyncio.sleep(5)
+
+        # 5. Take screenshot — read token via vision_analyze (unreliable!)
+        await ws.send(json.dumps({"id": 99, "method": "Page.captureScreenshot", "params": {"format": "png"}}))
+        resp = json.loads(await ws.recv())
+        with open("/tmp/github_token.png", "wb") as f:
+            f.write(base64.b64decode(resp["result"]["data"]))
+
+        # 6. Token is in DOM but MASKED — use vision_analyze on screenshot instead
+        # 7. ALWAYS verify token via API: curl -H "Authorization: token TOKEN" https://api.github.com/user
+
+asyncio.run(create_github_token())
+```
+
+**Pitfalls:**
+- GitHub masks tokens in DOM (`#new-oauth-token` shows `ghp_I4...LMUg`)
+- `vision_analyze` on screenshot is unreliable — failed 2/3 times in testing
+- ALWAYS verify the token works via API before using it
+- Note names must be unique — "already taken" error if reusing a name
 
 ## Full Workflow: Navigate + Screenshot + Describe
 
